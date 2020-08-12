@@ -1,0 +1,39 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from itertools import product
+from off.importer import read_off, write_off
+from scipy.sparse import csr_matrix
+
+
+class OffMesh:
+    def __init__(self, off_f_path: str = None):
+        self.vertices = None
+        self.faces = None
+        self.adj_matrix = None
+        if off_f_path:
+            self.load_mesh(off_f_path)
+
+    def load_mesh(self, off_f_path: str) -> None:
+        mesh = read_off(off_f_path=off_f_path)
+        self.vertices, self.faces = mesh["vertices"], mesh["faces"]
+        self.__create_vertex_adj_mat__()
+
+    def save_mesh(self, off_f_path: str) -> None:
+        if self.vertices is None or self.faces is None:
+            raise ValueError("Vertices or faces do not exist, can't save to OFF file!")
+
+        write_off(off_f_path=off_f_path, vertices=self.vertices, faces=self.faces)
+
+    def __create_vertex_adj_mat__(self):
+        if self.faces is None:
+            raise ValueError("Vertices or faces do not exist, can't create an adjacency matrix!")
+
+        self.adj_matrix = np.zeros(shape=(self.vertices.shape[0], self.vertices.shape[0]), dtype=int)
+        for vert_idxes in self.faces:
+            vert_comb = list(product(vert_idxes.tolist(), vert_idxes.tolist()))
+            vert_rows, vert_cols = np.split(np.array(vert_comb).transpose(), 2)
+            self.adj_matrix[vert_rows, vert_cols] = 1
+
+        # a vertex in a mesh cannot be connected to itself, so main diagonal contains only zeros
+        np.fill_diagonal(self.adj_matrix, 0)
+        self.adj_matrix = csr_matrix(self.adj_matrix)
