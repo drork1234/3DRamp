@@ -69,3 +69,10 @@ class OffMesh:
                                                                                            self.vertices[0]))
 
         self.pv_mesh.plot(style='surface', scalars=scalars)
+
+    def __compute_valence__(self) -> np.ndarray:
+        return sum(self.adj_matrix)[0]
+
+    @property
+    def valence(self) -> np.ndarray:
+        return __compute_valence__()
