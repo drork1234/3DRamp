@@ -75,4 +75,13 @@ class OffMesh:
 
     @property
     def valence(self) -> np.ndarray:
-        return __compute_valence__()
+        return self.__compute_valence__()
+
+    @property
+    def barycenters(self) -> np.ndarray:
+        face_verts = self.get_faces(self.faces[:, 1:])
+        return face_verts.mean(axis=1)
+
+    def get_faces(self, face_idxs: np.ndarray) -> np.ndarray:
+        verts = self.vertices[face_idxs.reshape(-1)]
+        return verts.reshape((-1, 3, 3))
