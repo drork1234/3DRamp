@@ -33,7 +33,6 @@ def read_off(off_f_path: str) -> Dict[str, np.ndarray]:
 
         # mesh faces are of the format: #N vert_idx0 vert_idx1 ... vert_idxN
         mesh_faces = np.array(lines[2+num_verts:]).astype(int)
-        mesh_faces = mesh_faces[:, 1:]
 
         return {"vertices": mesh_vertices, "faces": mesh_faces}
 
