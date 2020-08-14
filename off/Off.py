@@ -4,14 +4,15 @@ import matplotlib.pyplot as plt
 from itertools import product
 from off.importer import read_off, write_off
 from scipy.sparse import csr_matrix
+from types import LambdaType
 
 
 class OffMesh:
     def __init__(self, off_f_path: str = None):
-        self.vertices = None
-        self.faces = None
-        self.adj_matrix = None
-        self.pv_mesh = None
+        self.vertices: np.ndarray = None
+        self.faces: np.ndarray = None
+        self.adj_matrix: csr_matrix = None
+        self.pv_mesh: pv.PolyData = None
         if off_f_path:
             self.load_mesh(off_f_path)
 
@@ -47,14 +48,24 @@ class OffMesh:
 
         self.pv_mesh.plot(style='wireframe')
 
-    def plot_vertices(self, f):
+    def plot_vertices(self, f: LambdaType):
         if self.pv_mesh is None:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
-        self.pv_mesh.plot(style='points')
+        scalars = f(self.vertices)
+        if scalars.shape[0] != self.vertices.shape[0]:
+            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(scalars.shape[0],
+                                                                                           self.vertices[0]))
 
-    def plot_faces(self, f):
+        self.pv_mesh.plot(style='points', scalars=scalars)
+
+    def plot_faces(self, f: LambdaType):
         if self.pv_mesh is None:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
-        self.pv_mesh.plot(style='surface')
+        scalars = f(self.vertices)
+        if scalars.shape[0] != self.vertices.shape[0]:
+            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(scalars.shape[0],
+                                                                                           self.vertices[0]))
+
+        self.pv_mesh.plot(style='surface', scalars=scalars)
