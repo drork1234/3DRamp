@@ -5,6 +5,7 @@ from itertools import product
 from off.importer import read_off, write_off
 from scipy.sparse import csr_matrix
 from types import LambdaType
+from tqdm import tqdm
 
 
 class OffMesh:
@@ -13,6 +14,10 @@ class OffMesh:
         self.faces: np.ndarray = None
         self.adj_matrix: csr_matrix = None
         self.pv_mesh: pv.PolyData = None
+        self.areas: np.ndarray = None
+        self.normals: np.ndarray = None
+        self.vnormals: np.ndarray = None
+        self.vcurvature: np.ndarray = None
         if off_f_path:
             self.load_mesh(off_f_path)
 
@@ -20,13 +25,29 @@ class OffMesh:
         mesh = read_off(off_f_path=off_f_path)
         self.vertices, self.faces = mesh["vertices"], mesh["faces"]
         self.pv_mesh = pv.PolyData(self.vertices, self.faces)
-        self.__create_vertex_adj_mat__()
+        self.__calculate_mesh_properties__()
 
     def save_mesh(self, off_f_path: str) -> None:
         if self.vertices is None or self.faces is None:
             raise ValueError("Vertices or faces do not exist, can't save to OFF file!")
 
         write_off(off_f_path=off_f_path, vertices=self.vertices, faces=self.faces)
+
+    def __calculate_mesh_properties__(self):
+        print("Computing vertex-vertex adjacency matrix...")
+        self.__create_vertex_adj_mat__()
+
+        print("Computing face normals...")
+        self.normals = self.__compute_normals__()
+
+        print("Computing face areas...")
+        self.areas = self.__compute_areas__()
+
+        print("Computing vertex normals...")
+        self.vnormals = self.__compute_vnormals__()
+
+        print("Computing vertices gaussian curvature...")
+        self.vcurvature = self.__compute_vcurvatures__()
 
     def __create_vertex_adj_mat__(self):
         if self.faces is None:
@@ -57,18 +78,24 @@ class OffMesh:
             raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(scalars.shape[0],
                                                                                            self.vertices[0]))
 
-        self.pv_mesh.plot(style='points', scalars=scalars)
+        self.pv_mesh.plot(style='points', scalars=scalars, interactive=True)
 
-    def plot_faces(self, f: LambdaType):
+    def plot_faces(self, **kwd):
         if self.pv_mesh is None:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
-        scalars = f(self.vertices)
+        if "f" in kwd.keys():
+            scalars = kwd["f"](self.vertices)
+        elif "scalars" in kwd.keys():
+            scalars = kwd["scalars"]
+        else:
+            raise KeyError("Scalars must be created by a function (given by 'f') or given by the user (by 'scalars')")
+
         if scalars.shape[0] != self.vertices.shape[0]:
             raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(scalars.shape[0],
                                                                                            self.vertices[0]))
 
-        self.pv_mesh.plot(style='surface', scalars=scalars)
+        self.pv_mesh.plot(style='surface', scalars=scalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
 
     def __compute_valence__(self) -> np.ndarray:
         return sum(self.adj_matrix)[0]
@@ -82,8 +109,7 @@ class OffMesh:
         face_verts = self.get_faces(self.faces[:, 1:])
         return face_verts.mean(axis=1)
 
-    @property
-    def normals(self) -> np.ndarray:
+    def __compute_normals__(self) -> np.ndarray:
         face_verts = self.get_faces(self.faces[:, 1:])
 
         # split the face vertices between the first vertex and the 2 other vertices of the face
@@ -99,18 +125,17 @@ class OffMesh:
         # return the cross product between the vectors
         return np.cross(*face_vectors_lst).squeeze()
 
-    @property
-    def areas(self) -> np.ndarray:
+    def __compute_areas__(self) -> np.ndarray:
         return 0.5 * np.linalg.norm(self.normals, axis=1)
 
-    def vnormals(self, idx: int) -> np.ndarray:
+    def __compute__vnormal__(self, idx: int) -> np.ndarray:
         if idx < 0 or idx > self.vertices.shape[0]:
             raise ValueError("OFF Mesh: vertex index ({}) out of bounds. #vertices is {}!".format(idx,
                                                                                                   self.vertices.shape[0]
                                                                                                   ))
 
-        # get the faces idxs that each vertex belongs to
-        # face rows are the indices, so the column 0
+        # get the faces idxs that each the vertex belongs to
+        # face rows are the indices, so take column 0 (column 1 is the column in the matrix where the vertex index was found)
         adj_faces_idxs = np.argwhere(self.faces[:, 1:] == idx)[:, 0]
 
         # get the area for each adjacent face
@@ -121,7 +146,6 @@ class OffMesh:
 
         # normalize the face vectors
         adj_face_norms = adj_face_norms / np.linalg.norm(adj_face_norms, axis=1).reshape((-1, 1))
-        print(np.linalg.norm(adj_face_norms, axis=1))
 
         # create a weighted vector of the face areas and the face normals
         vert_normal = np.sum(adj_face_ares[:, np.newaxis] * adj_face_norms, axis=0)
@@ -131,7 +155,10 @@ class OffMesh:
 
         return vert_normal
 
-    def curvature(self, idx: int) -> float:
+    def __compute_vnormals__(self) -> np.ndarray:
+        return np.stack([self.__compute__vnormal__(idx) for idx in tqdm(range(0, self.vertices.shape[0]))], axis=0)
+
+    def __compute_curvature__(self, idx: int) -> float:
         if idx < 0 or idx > self.vertices.shape[0]:
             raise ValueError("OFF Mesh: vertex index ({}) out of bounds. #vertices is {}!".format(idx,
                                                                                                   self.vertices.shape[0]
@@ -168,6 +195,9 @@ class OffMesh:
         vert_curvature = 2*np.pi - np.sum(vert_angles)
 
         return vert_curvature
+
+    def __compute_vcurvatures__(self):
+        return np.array([self.__compute_curvature__(idx) for idx in tqdm(range(self.vertices.shape[0]))])
 
     def get_faces(self, face_idxs: np.ndarray) -> np.ndarray:
         verts = self.vertices[face_idxs.reshape(-1)]
