@@ -3,7 +3,7 @@ import pyvista as pv
 import matplotlib.pyplot as plt
 from itertools import product
 from off.importer import read_off, write_off
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, lil_matrix
 from types import LambdaType
 from tqdm import tqdm
 
@@ -53,14 +53,15 @@ class OffMesh:
         if self.faces is None:
             raise ValueError("Vertices or faces do not exist, can't create an adjacency matrix!")
 
-        self.adj_matrix = np.zeros(shape=(self.vertices.shape[0], self.vertices.shape[0]), dtype=int)
+        self.adj_matrix = lil_matrix((self.vertices.shape[0], self.vertices.shape[0]), dtype=int)
         for vert_idxes in self.faces[:, 1:]:
             vert_comb = list(product(vert_idxes.tolist(), vert_idxes.tolist()))
             vert_rows, vert_cols = np.split(np.array(vert_comb).transpose(), 2)
             self.adj_matrix[vert_rows, vert_cols] = 1
 
+        diag = np.arange(0, self.vertices.shape[0], dtype=int)
         # a vertex in a mesh cannot be connected to itself, so main diagonal contains only zeros
-        np.fill_diagonal(self.adj_matrix, 0)
+        self.adj_matrix[diag, diag] = 0
         self.adj_matrix = csr_matrix(self.adj_matrix)
 
     def plot_wireframe(self):
@@ -98,7 +99,7 @@ class OffMesh:
         self.pv_mesh.plot(style='surface', scalars=scalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
 
     def __compute_valence__(self) -> np.ndarray:
-        return sum(self.adj_matrix)[0]
+        return np.squeeze(sum(self.adj_matrix).toarray())
 
     @property
     def valence(self) -> np.ndarray:
