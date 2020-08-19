@@ -5,6 +5,7 @@ from itertools import product
 from off.importer import read_off, write_off
 from scipy.sparse import csr_matrix, lil_matrix
 from types import LambdaType
+from typing import Dict, List
 from tqdm import tqdm
 
 
@@ -85,18 +86,20 @@ class OffMesh:
         if self.pv_mesh is None:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
-        if "f" in kwd.keys():
-            scalars = kwd["f"](self.vertices)
-        elif "scalars" in kwd.keys():
-            scalars = kwd["scalars"]
+        f = kwd.pop("f", None)
+        scalars = kwd.pop("scalars", None)
+        if f is not None:
+            mscalars = f(self.vertices)
+        elif scalars is not None:
+            mscalars = kwd["scalars"]
         else:
             raise KeyError("Scalars must be created by a function (given by 'f') or given by the user (by 'scalars')")
 
-        if scalars.shape[0] != self.vertices.shape[0]:
-            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(scalars.shape[0],
+        if mscalars.shape[0] != self.vertices.shape[0]:
+            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(mscalars.shape[0],
                                                                                            self.vertices[0]))
 
-        self.pv_mesh.plot(style='surface', scalars=scalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
+        self.pv_mesh.plot(style='surface', scalars=mscalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
 
     def __compute_valence__(self) -> np.ndarray:
         return np.squeeze(sum(self.adj_matrix).toarray())
@@ -129,35 +132,45 @@ class OffMesh:
     def __compute_areas__(self) -> np.ndarray:
         return 0.5 * np.linalg.norm(self.normals, axis=1)
 
-    def __compute__vnormal__(self, idx: int) -> np.ndarray:
-        if idx < 0 or idx > self.vertices.shape[0]:
-            raise ValueError("OFF Mesh: vertex index ({}) out of bounds. #vertices is {}!".format(idx,
-                                                                                                  self.vertices.shape[0]
-                                                                                                  ))
-
+    def __compute_vnormals__(self) -> np.ndarray:
         # get the faces idxs that each the vertex belongs to
         # face rows are the indices, so take column 0 (column 1 is the column in the matrix where the vertex index was found)
-        adj_faces_idxs = np.argwhere(self.faces[:, 1:] == idx)[:, 0]
+        # face_groups contains the subgroups of vertices split by the number of faces that they are included in
+        # each value in the dict is a dictionary containing the vertex indices and their face indices that they are contained in
+        face_groups: Dict[int, Dict[str,]] = {}
+        for i in range(0, self.vertices.shape[0]):
+            adj_faces_idxs = np.argwhere(self.faces[:, 1:] == i)[:, 0]
+            num_idxs_adj_faces = adj_faces_idxs.shape[0]
+            if num_idxs_adj_faces not in face_groups.keys():
+                face_groups[num_idxs_adj_faces] = {"vert_idxs": [], "face_idxs": []}
+            face_groups[num_idxs_adj_faces]["vert_idxs"].append(i)
+            face_groups[num_idxs_adj_faces]["face_idxs"].append(adj_faces_idxs)
 
-        # get the area for each adjacent face
-        adj_face_ares = self.areas[adj_faces_idxs]
+        for num_adj_faces in face_groups.keys():
+            face_groups[num_adj_faces]["vert_idxs"] = np.array(face_groups[num_adj_faces]["vert_idxs"])
+            face_groups[num_adj_faces]["face_idxs"] = np.array(face_groups[num_adj_faces]["face_idxs"])
 
-        # get the normal for each adjacent face
-        adj_face_norms = self.normals[adj_faces_idxs]
+        vert_normals = np.zeros(shape=(self.vertices.shape[0], 3), dtype=float)
 
-        # normalize the face vectors
-        adj_face_norms = adj_face_norms / np.linalg.norm(adj_face_norms, axis=1).reshape((-1, 1))
+        for face_subgroup in face_groups.values():
+            adj_faces_idxs, vert_idxs = face_subgroup["face_idxs"], face_subgroup["vert_idxs"]
 
-        # create a weighted vector of the face areas and the face normals
-        vert_normal = np.sum(adj_face_ares[:, np.newaxis] * adj_face_norms, axis=0)
+            # get the area for each adjacent face
+            adj_face_ares = self.areas[adj_faces_idxs]
 
-        # normalize the weighted vector
-        vert_normal = vert_normal / np.linalg.norm(vert_normal)
+            # get the normal for each adjacent face
+            adj_face_norms = self.normals[adj_faces_idxs]
 
-        return vert_normal
+            # normalize the face vectors
+            adj_face_norms = adj_face_norms / np.linalg.norm(adj_face_norms, axis=2, keepdims=True)
 
-    def __compute_vnormals__(self) -> np.ndarray:
-        return np.stack([self.__compute__vnormal__(idx) for idx in tqdm(range(0, self.vertices.shape[0]))], axis=0)
+            # create a weighted vector of the face areas and the face normals
+            vert_normal = np.sum(np.expand_dims(adj_face_ares, axis=2) * adj_face_norms, axis=1)
+
+            # normalize the weighted vector
+            vert_normals[vert_idxs] = vert_normal / np.linalg.norm(vert_normal, axis=1, keepdims=True)
+
+        return vert_normals
 
     def __compute_curvature__(self, idx: int) -> float:
         if idx < 0 or idx > self.vertices.shape[0]:
