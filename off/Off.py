@@ -89,9 +89,9 @@ class OffMesh:
         f = kwd.pop("f", None)
         scalars = kwd.pop("scalars", None)
         if f is not None:
-            mscalars = f(self.vertices)
+            mscalars = f(self.vertices) if scalars is None else f(scalars)
         elif scalars is not None:
-            mscalars = kwd["scalars"]
+            mscalars = scalars
         else:
             raise KeyError("Scalars must be created by a function (given by 'f') or given by the user (by 'scalars')")
 
@@ -137,23 +137,14 @@ class OffMesh:
         # face rows are the indices, so take column 0 (column 1 is the column in the matrix where the vertex index was found)
         # face_groups contains the subgroups of vertices split by the number of faces that they are included in
         # each value in the dict is a dictionary containing the vertex indices and their face indices that they are contained in
-        face_groups: Dict[int, Dict[str,]] = {}
-        for i in range(0, self.vertices.shape[0]):
-            adj_faces_idxs = np.argwhere(self.faces[:, 1:] == i)[:, 0]
-            num_idxs_adj_faces = adj_faces_idxs.shape[0]
-            if num_idxs_adj_faces not in face_groups.keys():
-                face_groups[num_idxs_adj_faces] = {"vert_idxs": [], "face_idxs": []}
-            face_groups[num_idxs_adj_faces]["vert_idxs"].append(i)
-            face_groups[num_idxs_adj_faces]["face_idxs"].append(adj_faces_idxs)
-
-        for num_adj_faces in face_groups.keys():
-            face_groups[num_adj_faces]["vert_idxs"] = np.array(face_groups[num_adj_faces]["vert_idxs"])
-            face_groups[num_adj_faces]["face_idxs"] = np.array(face_groups[num_adj_faces]["face_idxs"])
-
+        this_valence = self.valence
+        all_mesh_valence_vals = np.unique(this_valence)
         vert_normals = np.zeros(shape=(self.vertices.shape[0], 3), dtype=float)
 
-        for face_subgroup in face_groups.values():
-            adj_faces_idxs, vert_idxs = face_subgroup["face_idxs"], face_subgroup["vert_idxs"]
+        for valence in all_mesh_valence_vals:
+            vert_idxs = np.argwhere(this_valence == valence)
+            adj_faces_idxs = np.argwhere(self.faces[:, 1:] == vert_idxs[:, :, np.newaxis])
+            adj_faces_idxs = adj_faces_idxs.reshape((vert_idxs.shape[0], valence, -1))[:, :, 1]
 
             # get the area for each adjacent face
             adj_face_ares = self.areas[adj_faces_idxs]
@@ -168,7 +159,7 @@ class OffMesh:
             vert_normal = np.sum(np.expand_dims(adj_face_ares, axis=2) * adj_face_norms, axis=1)
 
             # normalize the weighted vector
-            vert_normals[vert_idxs] = vert_normal / np.linalg.norm(vert_normal, axis=1, keepdims=True)
+            vert_normals[np.squeeze(vert_idxs)] = vert_normal / np.linalg.norm(vert_normal, axis=1, keepdims=True)
 
         return vert_normals
 
