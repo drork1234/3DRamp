@@ -48,7 +48,7 @@ class OffMesh:
         self.vnormals = self.__compute_vnormals__()
 
         print("Computing vertices gaussian curvature...")
-        self.vcurvature = self.__compute_vcurvatures__()
+        self.vcurvature = self.__compute_curvatures__()
 
     def __create_vertex_adj_mat__(self):
         if self.faces is None:
@@ -163,46 +163,51 @@ class OffMesh:
 
         return vert_normals
 
-    def __compute_curvature__(self, idx: int) -> float:
-        if idx < 0 or idx > self.vertices.shape[0]:
-            raise ValueError("OFF Mesh: vertex index ({}) out of bounds. #vertices is {}!".format(idx,
-                                                                                                  self.vertices.shape[0]
-                                                                                                  ))
-        # get all vertices adjacent to the requested vertex according to their faces
-        # 1. get the all the faces
-        faces_idxes = self.faces[:, 1:]
+    def __compute_curvatures__(self) -> np.ndarray:
+        this_valence = self.valence
+        all_mesh_valence_vals = np.unique(this_valence)
+        vert_curvs = np.zeros(shape=(self.vertices.shape[0], ), dtype=float)
 
-        # 2. get all faces indices where the vertex is a part of the face
-        vert_face_row_occurs = np.argwhere(faces_idxes == idx)[:, 0]
+        for valence in all_mesh_valence_vals:
+            vert_idxs = np.argwhere(this_valence == valence)
+            # this returns the faces indices in which the vertex is a part of
+            adj_faces_idxs = np.argwhere(self.faces[:, 1:] == vert_idxs[:, :, np.newaxis])
+            adj_faces_idxs = adj_faces_idxs.reshape((vert_idxs.shape[0], valence, -1))[:, :, 1]
 
-        # 3. get faces in which the vertex is a part of the face
-        vert_faces_idxs = faces_idxes[vert_face_row_occurs]
+            # get all vertices adjacent to the requested vertex according to their faces
+            # 1. get the all the faces
+            faces_idxes = self.faces[:, 1:]
 
-        # 4. get the number of faces in which the vertex is a part of
-        n_vert_occurs = vert_face_row_occurs.shape[0]
+            # 2. get faces in which the vertex is a part of the face
+            # this returns the faces of which the vertex is a part of
+            vert_all_faces_idxs = faces_idxes[adj_faces_idxs]
 
-        # 5. remove the index of the vertex from the face-vertices array, to include the other remaining vertices of the face
-        other_face_verts_idxs = vert_faces_idxs[~(vert_faces_idxs == idx)].reshape((n_vert_occurs, -1))
-        other_face_verts = self.vertices[other_face_verts_idxs.reshape(-1)].reshape((n_vert_occurs, 2, 3))
+            # 3. remove the index of the vertex from the face-vertices array, to include the other remaining vertices of the face
+            other_faces_vert_idxs = vert_all_faces_idxs[~(vert_all_faces_idxs == vert_idxs[:, :, np.newaxis])].\
+                reshape((vert_idxs.shape[0], valence, -1))
+            other_faces_vert = self.vertices[other_faces_vert_idxs.reshape(-1)].\
+                reshape((vert_idxs.shape[0], valence, 2, 3))
 
-        # compute the vectors according to the vertex for each face
-        this_vert = np.expand_dims(self.vertices[idx][np.newaxis, :], axis=0)
-        faces_vectors = other_face_verts - this_vert
+            # 4. compute the vectors according to the vertex for each face
+            these_verts = np.expand_dims(self.vertices[vert_idxs], axis=1)
+            all_faces_vectors = other_faces_vert - these_verts
 
-        # compute the cosine similarity between the vectors, which is the angle of the vertex between the 2 vectors
-        vert_cosines = np.sum(faces_vectors[:, 0, :] * faces_vectors[:, 1, :], axis=1) / \
-                       (np.linalg.norm(faces_vectors[:, 0, :], axis=1) * np.linalg.norm(faces_vectors[:, 1, :], axis=1))
+            # 5. compute the cosine similarity between the vectors, which is the angle of the vertex between the 2 vectors
+            verts_cosines = np.sum(all_faces_vectors[:, :, 0, :] * all_faces_vectors[:, :, 1, :], axis=2) / \
+                           (np.linalg.norm(all_faces_vectors[:, :, 0, :], axis=2) * np.linalg.norm(all_faces_vectors[:, :, 1, :], axis=2))
 
-        # compute the angles of the vertex
-        vert_angles = np.arccos(vert_cosines)
+            # 6. compute the angles of the vertex
+            # vert_angles = np.arccos(vert_cosines)
+            verts_angles = np.arccos(verts_cosines)
 
-        # compute the curvature of the vertex: 2*PI - sum_of_angles_near_the_vertex
-        vert_curvature = 2*np.pi - np.sum(vert_angles)
+            # 7. compute the curvature of the vertex: 2*PI - sum_of_angles_near_the_vertex
+            # vert_curvature = 2*np.pi - np.sum(vert_angles)
+            verts_curvature = 2*np.pi - np.sum(verts_angles, axis=1)
 
-        return vert_curvature
+            # 8. assign the vertices curvature values to the computed vertex indices
+            vert_curvs[vert_idxs.squeeze()] = verts_curvature
 
-    def __compute_vcurvatures__(self):
-        return np.array([self.__compute_curvature__(idx) for idx in tqdm(range(self.vertices.shape[0]))])
+        return vert_curvs
 
     def get_faces(self, face_idxs: np.ndarray) -> np.ndarray:
         verts = self.vertices[face_idxs.reshape(-1)]
