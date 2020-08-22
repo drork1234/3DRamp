@@ -71,16 +71,24 @@ class OffMesh:
 
         self.pv_mesh.plot(style='wireframe')
 
-    def plot_vertices(self, f: LambdaType):
+    def plot_vertices(self, **kwd):
         if self.pv_mesh is None:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
-        scalars = f(self.vertices)
-        if scalars.shape[0] != self.vertices.shape[0]:
-            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(scalars.shape[0],
+        f = kwd.pop("f", None)
+        scalars = kwd.pop("scalars", None)
+        if f is not None:
+            mscalars = f(self.vertices) if scalars is None else f(scalars)
+        elif scalars is not None:
+            mscalars = scalars
+        else:
+            raise KeyError("Scalars must be created by a function (given by 'f') or given by the user (by 'scalars')")
+
+        if mscalars.shape[0] != self.vertices.shape[0]:
+            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(mscalars.shape[0],
                                                                                            self.vertices[0]))
 
-        self.pv_mesh.plot(style='points', scalars=scalars, interactive=True)
+        self.pv_mesh.plot(style='points', scalars=mscalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
 
     def plot_faces(self, **kwd):
         if self.pv_mesh is None:
@@ -100,6 +108,7 @@ class OffMesh:
                                                                                            self.vertices[0]))
 
         self.pv_mesh.plot(style='surface', scalars=mscalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
+
 
     def __compute_valence__(self) -> np.ndarray:
         return np.squeeze(sum(self.adj_matrix).toarray())
