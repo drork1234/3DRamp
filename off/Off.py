@@ -95,7 +95,13 @@ class OffMesh:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
         f = kwd.pop("f", None)
-        scalars = kwd.pop("scalars", None)
+        scalars: np.ndarray = kwd.pop("scalars", None)
+        show_normals: bool = kwd.pop("show_normals", False)
+        normals_scale: float = kwd.pop("normals_scale", 1)
+        show_vnormals: bool = kwd.pop("show_vnormals", False)
+        vnormals_scale: float = kwd.pop("vnormals_scale", 1)
+        normalize: bool = kwd.pop("normalize", False)
+
         if f is not None:
             mscalars = f(self.vertices) if scalars is None else f(scalars)
         elif scalars is not None:
@@ -107,8 +113,28 @@ class OffMesh:
             raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(mscalars.shape[0],
                                                                                            self.vertices[0]))
 
-        self.pv_mesh.plot(style='surface', scalars=mscalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
+        # instantiate a plotter
+        plotter = pv.Plotter()
 
+        if show_vnormals:
+            self.pv_mesh.vectors = (self.vnormals if not normalize else self.normalized_vertex_normals) * vnormals_scale
+            plotter.add_mesh(self.pv_mesh.arrows, scalars='GlyphScale', lighting=False, stitle=None)
+
+        if show_normals:
+            faces_normals = pv.PolyData(self.barycenters)
+            faces_normals.vectors = (self.normals if not normalize else self.normalized_face_normals) * normals_scale
+            plotter.add_mesh(faces_normals.arrows,
+                             scalars='GlyphScale',
+                             lighting=False)
+
+        plotter.add_mesh(self.pv_mesh,
+                         style='surface',
+                         scalars=mscalars,
+                         show_scalar_bar=True,
+                         stitle="Vertex Curvature",
+                         **kwd)
+
+        plotter.show()
 
     def __compute_valence__(self) -> np.ndarray:
         return np.squeeze(sum(self.adj_matrix).toarray())
@@ -137,6 +163,14 @@ class OffMesh:
 
         # return the cross product between the vectors
         return np.cross(*face_vectors_lst).squeeze()
+
+    @property
+    def normalized_face_normals(self):
+        return self.normals / np.linalg.norm(self.normals, axis=1, keepdims=True)
+
+    @property
+    def normalized_vertex_normals(self):
+        return self.vnormals / np.linalg.norm(self.vnormals, axis=1, keepdims=True)
 
     def __compute_areas__(self) -> np.ndarray:
         return 0.5 * np.linalg.norm(self.normals, axis=1)
@@ -168,9 +202,12 @@ class OffMesh:
             vert_normal = np.sum(np.expand_dims(adj_face_ares, axis=2) * adj_face_norms, axis=1)
 
             # normalize the weighted vector
-            vert_normals[np.squeeze(vert_idxs)] = vert_normal / np.linalg.norm(vert_normal, axis=1, keepdims=True)
+            # vert_normals[np.squeeze(vert_idxs)] = vert_normal / np.linalg.norm(vert_normal, axis=1, keepdims=True)
+            vert_normals[np.squeeze(vert_idxs)] = vert_normal
 
         return vert_normals
+
+
 
     def __compute_curvatures__(self) -> np.ndarray:
         this_valence = self.valence
