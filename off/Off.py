@@ -71,26 +71,7 @@ class OffMesh:
 
         self.pv_mesh.plot(style='wireframe')
 
-    def plot_vertices(self, **kwd):
-        if self.pv_mesh is None:
-            raise ValueError("PyVista OFF Mesh is None. Can't plot!")
-
-        f = kwd.pop("f", None)
-        scalars = kwd.pop("scalars", None)
-        if f is not None:
-            mscalars = f(self.vertices) if scalars is None else f(scalars)
-        elif scalars is not None:
-            mscalars = scalars
-        else:
-            raise KeyError("Scalars must be created by a function (given by 'f') or given by the user (by 'scalars')")
-
-        if mscalars.shape[0] != self.vertices.shape[0]:
-            raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(mscalars.shape[0],
-                                                                                           self.vertices[0]))
-
-        self.pv_mesh.plot(style='points', scalars=mscalars, scalar_bar_args={"interactive": True}, show_scalar_bar=True)
-
-    def plot_faces(self, **kwd):
+    def __plot_complex__(self, style: str, **kwd):
         if self.pv_mesh is None:
             raise ValueError("PyVista OFF Mesh is None. Can't plot!")
 
@@ -101,24 +82,27 @@ class OffMesh:
         show_vnormals: bool = kwd.pop("show_vnormals", False)
         vnormals_scale: float = kwd.pop("vnormals_scale", 1)
         normalize: bool = kwd.pop("normalize", False)
+        show_points: bool = kwd.pop("show_points", False)
+        show: bool = kwd.pop("show", False)
 
+        mscalars = None
         if f is not None:
             mscalars = f(self.vertices) if scalars is None else f(scalars)
         elif scalars is not None:
             mscalars = scalars
-        else:
-            raise KeyError("Scalars must be created by a function (given by 'f') or given by the user (by 'scalars')")
 
-        if mscalars.shape[0] != self.vertices.shape[0]:
+        if mscalars is not None and mscalars.shape[0] != self.vertices.shape[0]:
             raise ValueError("PyVista OFF Mesh: scalar.shape[0] {} != #vertices {}".format(mscalars.shape[0],
-                                                                                           self.vertices[0]))
+                                                                                           self.vertices.shape[0]))
 
         # instantiate a plotter
         plotter = pv.Plotter()
 
         if show_vnormals:
             self.pv_mesh.vectors = (self.vnormals if not normalize else self.normalized_vertex_normals) * vnormals_scale
-            plotter.add_mesh(self.pv_mesh.arrows, scalars='GlyphScale', lighting=False, stitle=None)
+            plotter.add_mesh(self.pv_mesh.arrows,
+                             scalars='GlyphScale',
+                             lighting=False)
 
         if show_normals:
             faces_normals = pv.PolyData(self.barycenters)
@@ -127,14 +111,22 @@ class OffMesh:
                              scalars='GlyphScale',
                              lighting=False)
 
-        plotter.add_mesh(self.pv_mesh,
-                         style='surface',
-                         scalars=mscalars,
-                         show_scalar_bar=True,
-                         stitle="Vertex Curvature",
-                         **kwd)
+        if show_points and mscalars is not None:
+            plotter.add_mesh(self.pv_mesh,
+                             style=style,
+                             scalars=mscalars,
+                             **kwd)
 
-        plotter.show()
+        if show:
+            plotter.show()
+
+        return plotter
+
+    def plot_vertices(self, **kwd):
+        return self.__plot_complex__(style="points", **kwd)
+
+    def plot_faces(self, **kwd):
+        return self.__plot_complex__(style="surface", **kwd)
 
     def __compute_valence__(self) -> np.ndarray:
         return np.squeeze(sum(self.adj_matrix).toarray())
